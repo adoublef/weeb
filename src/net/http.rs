@@ -26,13 +26,14 @@ pub fn app() -> Router {
 #[derive(Deserialize)]
 struct ZipQuery {
     series_url: Url,
+    deflate: Option<bool>,
 }
 
 async fn handle_zip(
     State(AppState { handler }): State<AppState>,
     Query(query): Query<ZipQuery>,
 ) -> anyhow::Result<Response, AppError> {
-    let stream = handler.series_stream(query.series_url);
+    let stream = handler.series_stream(query.series_url, query.deflate.unwrap_or_default());
     let response = Response::builder()
         .header(CONTENT_TYPE, APPLICATION_OCTET_STREAM.essence_str())
         .header(CONTENT_DISPOSITION, "attachment; filename=\"weeb.zip\"")

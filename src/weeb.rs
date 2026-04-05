@@ -35,6 +35,7 @@ impl Handler {
     pub fn series_stream(
         &self,
         mut series_url: Url,
+        deflate: bool,
     ) -> impl Stream<Item = anyhow::Result<Bytes>> + 'static {
         let mut set = JoinSet::new();
 
@@ -70,22 +71,24 @@ impl Handler {
         set.spawn({
             let this = self.clone();
             async move {
+                let compress = if deflate {
+                    Compression::Deflate
+                } else {
+                    Compression::Stored
+                };
                 let mut wri = ZipFileWriter::with_tokio(tx).force_zip64();
 
                 let mut stream = ReceiverStream::new(chapter_urls).enumerate();
                 while let Some((ix, chapter_url)) = stream.next().await {
                     let chapter_stream = StreamReader::new(
-                        this.chapter_stream(chapter_url)
+                        this.chapter_stream(chapter_url, deflate)
                             .map_err(std::io::Error::other),
                     );
                     pin!(chapter_stream); // don't like this, look into Unpin without needing to use pin
                     let mut chapter_entry = wri
                         .write_entry_stream(
-                            ZipEntryBuilder::new(
-                                format!("chapter-{ix}.zip").into(),
-                                Compression::Stored,
-                            )
-                            .last_modification_date(Utc::now().into()),
+                            ZipEntryBuilder::new(format!("chapter-{ix}.zip").into(), compress)
+                                .last_modification_date(Utc::now().into()),
                         )
                         .await?
                         .compat_write();
@@ -110,7 +113,11 @@ impl Handler {
         stream
     }
 
-    fn chapter_stream(&self, mut chapter_url: Url) -> impl Stream<Item = anyhow::Result<Bytes>> {
+    fn chapter_stream(
+        &self,
+        mut chapter_url: Url,
+        deflate: bool,
+    ) -> impl Stream<Item = anyhow::Result<Bytes>> {
         let mut set = JoinSet::new();
 
         let (tx, image_urls) = mpsc::channel(DEFAULT_CHAN_BUF_SIZE);
@@ -189,25 +196,26 @@ impl Handler {
         let (rx, tx) = duplex(DEFAULT_MAX_BUF_SIZE);
         set.spawn({
             async move {
+                let compress = if deflate {
+                    Compression::Deflate
+                } else {
+                    Compression::Stored
+                };
                 let mut wri = ZipFileWriter::with_tokio(tx).force_zip64();
 
                 let mut stream = ReceiverStream::new(image_bufs).enumerate();
                 while let Some((ix, image_buf)) = stream.next().await {
                     // Compat<&[u8]>
-                    let mut image_buf = image_buf.compat();
-
                     let mut image_entry = wri
                         .write_entry_stream(
-                            ZipEntryBuilder::new(
-                                format!("image-{ix}.png").into(),
-                                Compression::Stored,
-                            )
-                            .last_modification_date(Utc::now().into()),
+                            ZipEntryBuilder::new(format!("image-{ix}.png").into(), compress)
+                                .uncompressed_size(image_buf.len() as u64) // 86387
+                                .last_modification_date(Utc::now().into()),
                         )
                         .await?
                         .compat_write();
 
-                    copy(&mut image_buf, &mut image_entry).await?;
+                    copy(&mut image_buf.compat(), &mut image_entry).await?;
                     image_entry.into_inner().close().await?;
                 }
 
