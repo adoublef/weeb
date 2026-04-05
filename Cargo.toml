@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.102"
 async-read-length-limit = "0.1.3"
 async-stream = "0.3.6"
-async_zip = { version = "0.0.18", features = ["chrono", "tokio"] }
+async_zip = { version = "0.0.18", features = ["chrono", "deflate", "tokio"] }
 async_zip_futures = { version = "0.0.13", features = ["chrono"] }
 axum = "0.8.8"
 bytes = "1.11.1"
