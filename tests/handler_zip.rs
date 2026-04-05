@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use async_zip::base::read::seek::ZipFileReader;
+use async_zip::base::read::stream::ZipFileReader;
 use axum::{
     Router,
     extract::{Path, State},
@@ -10,8 +10,12 @@ use futures::TryStreamExt as _;
 use http::{StatusCode, header::CONTENT_TYPE};
 use mime::APPLICATION_OCTET_STREAM;
 use reqwest::Client;
-use tokio::{fs::File, io::BufReader, net::TcpListener, task::JoinSet};
-use tokio_util::{compat::TokioAsyncReadCompatExt as _, io::StreamReader, sync::CancellationToken};
+use tokio::{
+    io::{AsyncBufRead, BufReader, sink},
+    net::TcpListener,
+    task::JoinSet,
+};
+use tokio_util::{compat::FuturesAsyncReadCompatExt, io::StreamReader, sync::CancellationToken};
 use tower_http::services::ServeFile;
 use url::Url;
 use weeb::{html::template, net::http::app};
@@ -21,15 +25,15 @@ async fn handle_zip_ok() -> anyhow::Result<()> {
     let mut set = JoinSet::new();
     let token = CancellationToken::new();
 
-    let num_chapters = 1 << 1;
-    let num_images = 1 << 1;
+    let num_chapters = 1 << 2;
+    let num_images = 1 << 2;
 
     let (client, api_url) = api_serve(&mut set, token.clone(), num_chapters, num_images).await?;
     let (client, mut url) = serve(&mut set, token.clone(), client).await?;
 
-    let series_url = api_url.join("series/1")?;
     url.query_pairs_mut()
-        .append_pair("series_url", series_url.as_str());
+        .append_pair("series_url", &format!("{api_url}series/1"))
+        .append_pair("deflate", "true");
 
     let response = client.get(url).send().await?;
     assert_eq!(response.status(), StatusCode::OK);
@@ -40,29 +44,34 @@ async fn handle_zip_ok() -> anyhow::Result<()> {
     assert_eq!(content_type, APPLICATION_OCTET_STREAM.as_ref());
 
     // write to a temp file and then parse it
-    {
-        let mut file = File::create("test.zip").await?;
-        let mut stream = StreamReader::new(response.bytes_stream().map_err(std::io::Error::other));
-
-        assert!(tokio::io::copy(&mut stream, &mut file).await? > 0);
-    };
+    let reader = StreamReader::new(response.bytes_stream().map_err(std::io::Error::other));
+    // https://github.com/Majored/rs-async-zip/releases/tag/v0.0.17
+    let mut series_zip = ZipFileReader::with_tokio(reader);
 
     let mut num_files = 0;
-    let archive = File::open("test.zip").await?;
-    let archive = BufReader::new(archive).compat();
-    let reader = ZipFileReader::new(archive).await?;
-    for index in 0..reader.file().entries().len() {
-        let entry = reader
-            .file()
-            .entries()
-            .get(index)
-            .ok_or_else(|| anyhow::format_err!("No entry found"))?;
-        assert_eq!(entry.dir()?, false);
-        // open the zip as file
-        num_files += 1;
-        // Read the content of the zip file
+    while let Some(mut entry) = series_zip.next_with_entry().await? {
+        let is_dir = entry.reader().entry().dir()?;
+        assert_eq!(is_dir, false);
+
+        let reader = entry.reader_mut().compat();
+        let buf_reader = BufReader::with_capacity(4 << 10, reader); // ~8 KB
+        let mut chapter_zip = ZipFileReader::with_tokio(buf_reader);
+        while let Some(entry) = chapter_zip.next_with_entry().await? {
+            let is_dir = entry.reader().entry().dir()?;
+            assert_eq!(is_dir, false);
+
+            let size = entry.reader().entry().uncompressed_size();
+            assert_eq!(size, 86387);
+
+            chapter_zip = entry.skip().await?;
+            num_files += 1;
+        }
+
+        // Close current file prior to proceeding, as per:
+        // https://docs.rs/async_zip/0.0.16/async_zip/base/read/stream/
+        series_zip = entry.skip().await?;
     }
-    assert_eq!(num_files, num_chapters);
+    assert_eq!(num_files, num_chapters * num_images);
 
     token.cancel();
     for res in set.join_all().await {
