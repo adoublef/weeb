@@ -1,0 +1,6 @@
+{{ range $i, $_ := N $.N }}
+<div>
+    {{ $rev := sub (sub $.N 1) $i }}
+    <a href="{{ url $.BaseURL "chapters" (iota (inc $rev)) }}"></a>
+</div>
+{{ end }}

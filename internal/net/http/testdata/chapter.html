@@ -1,0 +1,5 @@
+{{ range $i, $_ := N $.N }}
+<!-- import fmt.Sprintf -->
+{{ $path := join "-" (iota $.Chapter) (iota (inc $i)) }}
+<img src="{{ url $.BaseURL "images" (join "." $path "png") }}" />
+{{ end }}
