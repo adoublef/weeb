@@ -89,7 +89,7 @@ func BenchmarkHandler(b *testing.B) {
 	bb := map[string]benchcase{
 		"(8,8)":  {1 << 3, 1 << 3},
 		"(4,16)": {1 << 2, 1 << 4},
-		"(2,64)": {1 << 1, 1 << 5},
+		"(2,32)": {1 << 1, 1 << 5},
 	}
 
 	for name, bc := range bb {
