@@ -1,0 +1,6 @@
+github.com/krolaw/zipstream v0.0.0-20241109034754-4a67be70fe31 h1:oyiP1pdKMzpdB/lP2SwbZ8MVgqmZ65eG0wROX3afryQ=
+github.com/krolaw/zipstream v0.0.0-20241109034754-4a67be70fe31/go.mod h1:Nk+TihnyI0Wu4sQ28t7BbW3WOlPlBg3MniVdl2nRp5k=
+golang.org/x/net v0.52.0 h1:He/TN1l0e4mmR3QqHMT2Xab3Aj3L9qjbhRm78/6jrW0=
+golang.org/x/net v0.52.0/go.mod h1:R1MAz7uMZxVMualyPXb+VaqGSa3LIaUqk0eEt3w36Sw=
+golang.org/x/sync v0.20.0 h1:e0PTpb7pjO8GAtTs2dQ6jYa5BWYlMuX047Dco/pItO4=
+golang.org/x/sync v0.20.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
