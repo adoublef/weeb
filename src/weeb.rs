@@ -6,11 +6,10 @@ use bytes::Bytes;
 use chrono::Utc;
 use futures_util::{Stream, StreamExt as _, TryStreamExt};
 use http_body_util::{BodyDataStream, Limited};
-use mimetype_detector::{detect, detect_with_limit, equals_any};
-use scraper::{Html, Selector};
+use mimetype_detector::{detect_with_limit, equals_any};
 use tokio::{
     io::{AsyncRead, copy, duplex},
-    pin, spawn,
+    pin,
     sync::mpsc,
     task::{JoinSet, spawn_blocking},
 };
@@ -29,34 +28,34 @@ const DEFAULT_MAX_BUF_SIZE: usize = 4 << 10;
 pub struct HttpClient(pub reqwest::Client);
 
 impl HttpClient {
-    fn chapter_urls(&self, mut series_url: Url) -> impl Stream<Item = anyhow::Result<Url>> {
-        let (tx, rx) = mpsc::channel(DEFAULT_CHAN_BUF_SIZE);
-        let fut = spawn({
-            let client = self.0.clone();
-            async move {
-                series_url
-                    .path_segments_mut()
-                    .map_err(|_| anyhow!("Invalid path segments"))?
-                    .push("full-chapter-list");
+    async fn chapter_urls(
+        &self,
+        mut series_url: Url,
+    ) -> anyhow::Result<impl Stream<Item = anyhow::Result<Url>>> {
+        series_url
+            .path_segments_mut()
+            .map_err(|_| anyhow!("Invalid path segments"))?
+            .push("full-chapter-list");
 
-                let response = client
-                    .get(series_url)
-                    .send()
-                    .await?
-                    .error_for_status()?
-                    .bytes_stream();
-                let stream = StreamReader::new(response.map_err(std::io::Error::other));
-                let fut = spawn_blocking(move || {
-                    let stream = SyncIoBridge::new(stream);
-                    for res in anchors(stream) {
-                        let res = res?; // validate url parts
-                        tx.blocking_send(res)?;
-                    }
-                    anyhow::Ok(())
-                });
-                anyhow::Ok(fut.await??)
+        let response = self
+            .0
+            .get(series_url)
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes_stream();
+        let stream = StreamReader::new(response.map_err(std::io::Error::other));
+
+        let (tx, rx) = mpsc::channel(DEFAULT_CHAN_BUF_SIZE);
+        let fut = spawn_blocking(move || {
+            let stream = SyncIoBridge::new(stream);
+            for res in anchors(stream) {
+                let res = res?; // validate url parts
+                tx.blocking_send(res)?;
             }
+            anyhow::Ok(())
         });
+        // anyhow::Ok(fut.await??)
 
         let stream = try_stream! {
             let mut stream = ReceiverStream::new(rx);
@@ -65,38 +64,38 @@ impl HttpClient {
             }
             fut.await??;
         };
-        stream
+        Ok(stream)
     }
 
-    async fn _chapter_urls(
-        &self,
-        mut series_url: Url,
-    ) -> anyhow::Result<impl Iterator<Item = anyhow::Result<Url>> + 'static> {
-        series_url
-            .path_segments_mut()
-            .map_err(|_| anyhow!("Invalid path segments"))?
-            .push("full-chapter-list");
+    // async fn _chapter_urls(
+    //     &self,
+    //     mut series_url: Url,
+    // ) -> anyhow::Result<impl Iterator<Item = anyhow::Result<Url>> + 'static> {
+    //     series_url
+    //         .path_segments_mut()
+    //         .map_err(|_| anyhow!("Invalid path segments"))?
+    //         .push("full-chapter-list");
 
-        // maybe we could limit the size somehow here
-        let body = self
-            .0
-            .get(series_url)
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
+    //     // maybe we could limit the size somehow here
+    //     let body = self
+    //         .0
+    //         .get(series_url)
+    //         .send()
+    //         .await?
+    //         .error_for_status()?
+    //         .text()
+    //         .await?;
 
-        let document = Html::parse_document(&body);
-        let selector = Selector::parse("a").unwrap(); // `?`
-        Ok(document
-            .select(&selector)
-            .map(|image| image.attr("href").unwrap_or_default())
-            .filter(|href| !href.is_empty())
-            .map(|href| anyhow::Ok(Url::parse(href)?))
-            .collect::<Vec<_>>()
-            .into_iter())
-    }
+    //     let document = Html::parse_document(&body);
+    //     let selector = Selector::parse("a").unwrap(); // `?`
+    //     Ok(document
+    //         .select(&selector)
+    //         .map(|image| image.attr("href").unwrap_or_default())
+    //         .filter(|href| !href.is_empty())
+    //         .map(|href| anyhow::Ok(Url::parse(href)?))
+    //         .collect::<Vec<_>>()
+    //         .into_iter())
+    // }
 
     async fn image_urls(
         &self,
@@ -136,35 +135,35 @@ impl HttpClient {
         Ok(stream)
     }
 
-    async fn _image_urls(
-        &self,
-        mut chapter_url: Url,
-    ) -> anyhow::Result<impl Iterator<Item = anyhow::Result<Url>> + 'static> {
-        chapter_url
-            .path_segments_mut()
-            .map_err(|_| anyhow!("Invalid path segments"))?
-            .push("images");
+    // async fn _image_urls(
+    //     &self,
+    //     mut chapter_url: Url,
+    // ) -> anyhow::Result<impl Iterator<Item = anyhow::Result<Url>> + 'static> {
+    //     chapter_url
+    //         .path_segments_mut()
+    //         .map_err(|_| anyhow!("Invalid path segments"))?
+    //         .push("images");
 
-        // maybe we could limit the size somehow here
-        let body = self
-            .0
-            .get(chapter_url)
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
+    //     // maybe we could limit the size somehow here
+    //     let body = self
+    //         .0
+    //         .get(chapter_url)
+    //         .send()
+    //         .await?
+    //         .error_for_status()?
+    //         .text()
+    //         .await?;
 
-        let document = Html::parse_document(&body);
-        let selector = Selector::parse("img").unwrap(); // `?`
-        Ok(document
-            .select(&selector)
-            .map(|image| image.attr("src").unwrap_or_default())
-            .filter(|src| !src.is_empty())
-            .map(|src| anyhow::Ok(Url::parse(src)?))
-            .collect::<Vec<_>>()
-            .into_iter())
-    }
+    //     let document = Html::parse_document(&body);
+    //     let selector = Selector::parse("img").unwrap(); // `?`
+    //     Ok(document
+    //         .select(&selector)
+    //         .map(|image| image.attr("src").unwrap_or_default())
+    //         .filter(|src| !src.is_empty())
+    //         .map(|src| anyhow::Ok(Url::parse(src)?))
+    //         .collect::<Vec<_>>()
+    //         .into_iter())
+    // }
 
     async fn image_reader(&self, image_url: Url) -> anyhow::Result<impl AsyncRead> {
         let response = self.0.get(image_url).send().await?.error_for_status()?;
@@ -197,10 +196,10 @@ impl Handler {
         set.spawn({
             let client = self.client.clone();
             async move {
-                let mut stream = client._chapter_urls(series_url).await?;
-                // pin!(stream);
+                let stream = client.chapter_urls(series_url).await?;
+                pin!(stream);
                 // let mut stream: impl Stream<Item = Result<Url, Error>>
-                while let Some(res) = stream.next() {
+                while let Some(res) = stream.next().await {
                     let res = res?;
                     tx.send(res).await?;
                 }
@@ -265,9 +264,9 @@ impl Handler {
         set.spawn({
             let client = self.client.clone();
             async move {
-                let mut stream = client._image_urls(chapter_url).await?;
-                // pin!(stream);
-                while let Some(res) = stream.next() {
+                let stream = client.image_urls(chapter_url).await?;
+                pin!(stream);
+                while let Some(res) = stream.next().await {
                     let res = res?;
                     tx.send(res).await?;
                 }
