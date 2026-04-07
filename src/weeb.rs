@@ -121,8 +121,7 @@ impl HttpClient {
 
 #[derive(Clone, Debug, Default)]
 pub struct Handler {
-    // client: reqwest::Client,
-    http_client: HttpClient,
+    client: HttpClient,
 }
 
 impl Handler {
@@ -135,7 +134,7 @@ impl Handler {
 
         let (tx, chapter_urls) = mpsc::channel(DEFAULT_CHAN_BUF_SIZE);
         set.spawn({
-            let client = self.http_client.clone();
+            let client = self.client.clone();
             async move {
                 let stream = client.chapter_urls(series_url);
                 pin!(stream);
@@ -203,7 +202,7 @@ impl Handler {
 
         let (tx, image_urls) = mpsc::channel(DEFAULT_CHAN_BUF_SIZE);
         set.spawn({
-            let client = self.http_client.clone();
+            let client = self.client.clone();
             async move {
                 let stream = client.image_urls(chapter_url).await?;
                 pin!(stream);
@@ -218,7 +217,7 @@ impl Handler {
         // copy all images into buffers
         let (tx, image_bufs) = mpsc::channel(DEFAULT_CHAN_BUF_SIZE);
         set.spawn({
-            let client = self.http_client.clone();
+            let client = self.client.clone();
             async move {
                 anyhow::Ok(
                     ReceiverStream::new(image_urls)
