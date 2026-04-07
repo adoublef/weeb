@@ -7,7 +7,6 @@ use axum::{
 };
 use divan::{AllocProfiler, Bencher};
 use futures::TryStreamExt as _;
-use reqwest::Client;
 use tokio::task::JoinSet;
 use tokio_util::{io::StreamReader, sync::CancellationToken};
 use tower_http::services::ServeFile;

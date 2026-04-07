@@ -6,7 +6,8 @@ use bytes::Bytes;
 use chrono::Utc;
 use futures_util::{Stream, StreamExt as _, TryStreamExt};
 use http_body_util::{BodyDataStream, Limited};
-use mimetype_detector::{detect, equals_any};
+use mimetype_detector::{detect, detect_with_limit, equals_any};
+use scraper::{Html, Selector};
 use tokio::{
     io::{AsyncRead, copy, duplex},
     pin, spawn,
@@ -67,6 +68,36 @@ impl HttpClient {
         stream
     }
 
+    async fn _chapter_urls(
+        &self,
+        mut series_url: Url,
+    ) -> anyhow::Result<impl Iterator<Item = anyhow::Result<Url>> + 'static> {
+        series_url
+            .path_segments_mut()
+            .map_err(|_| anyhow!("Invalid path segments"))?
+            .push("full-chapter-list");
+
+        // maybe we could limit the size somehow here
+        let body = self
+            .0
+            .get(series_url)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+
+        let document = Html::parse_document(&body);
+        let selector = Selector::parse("a").unwrap(); // `?`
+        Ok(document
+            .select(&selector)
+            .map(|image| image.attr("href").unwrap_or_default())
+            .filter(|href| !href.is_empty())
+            .map(|href| anyhow::Ok(Url::parse(href)?))
+            .collect::<Vec<_>>()
+            .into_iter())
+    }
+
     async fn image_urls(
         &self,
         mut chapter_url: Url,
@@ -105,6 +136,36 @@ impl HttpClient {
         Ok(stream)
     }
 
+    async fn _image_urls(
+        &self,
+        mut chapter_url: Url,
+    ) -> anyhow::Result<impl Iterator<Item = anyhow::Result<Url>> + 'static> {
+        chapter_url
+            .path_segments_mut()
+            .map_err(|_| anyhow!("Invalid path segments"))?
+            .push("images");
+
+        // maybe we could limit the size somehow here
+        let body = self
+            .0
+            .get(chapter_url)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+
+        let document = Html::parse_document(&body);
+        let selector = Selector::parse("img").unwrap(); // `?`
+        Ok(document
+            .select(&selector)
+            .map(|image| image.attr("src").unwrap_or_default())
+            .filter(|src| !src.is_empty())
+            .map(|src| anyhow::Ok(Url::parse(src)?))
+            .collect::<Vec<_>>()
+            .into_iter())
+    }
+
     async fn image_reader(&self, image_url: Url) -> anyhow::Result<impl AsyncRead> {
         let response = self.0.get(image_url).send().await?.error_for_status()?;
 
@@ -136,10 +197,10 @@ impl Handler {
         set.spawn({
             let client = self.client.clone();
             async move {
-                let stream = client.chapter_urls(series_url);
-                pin!(stream);
+                let mut stream = client._chapter_urls(series_url).await?;
+                // pin!(stream);
                 // let mut stream: impl Stream<Item = Result<Url, Error>>
-                while let Some(res) = stream.next().await {
+                while let Some(res) = stream.next() {
                     let res = res?;
                     tx.send(res).await?;
                 }
@@ -204,9 +265,9 @@ impl Handler {
         set.spawn({
             let client = self.client.clone();
             async move {
-                let stream = client.image_urls(chapter_url).await?;
-                pin!(stream);
-                while let Some(res) = stream.next().await {
+                let mut stream = client._image_urls(chapter_url).await?;
+                // pin!(stream);
+                while let Some(res) = stream.next() {
                     let res = res?;
                     tx.send(res).await?;
                 }
@@ -233,7 +294,7 @@ impl Handler {
                                 copy(&mut reader, &mut buf).await?;
 
                                 // TODO: i want to detect _before_ reading the whole content since we only need
-                                let mime_type = detect(&buf).mime();
+                                let mime_type = detect_with_limit(&buf, 512).mime();
                                 if !equals_any(
                                     mime_type,
                                     &[
