@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.102"
 async-read-length-limit = "0.1.3"
 async-stream = "0.3.6"
+async-trait = "0.1.89"
 async_zip = { version = "0.0.18", features = ["chrono", "deflate", "tokio"] }
 async_zip_futures = { version = "0.0.13", features = ["chrono"] }
 axum = "0.8.8"
@@ -24,12 +25,14 @@ mime = "0.3.17"
 mimetype-detector = "0.3.7"
 rc-zip-tokio = "4.3.1"
 reqwest = { version = "0.13.2", features = ["stream"] }
+scraper = "0.26.0"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
 tokio = { version = "1.51.0", features = ["io-util", "rt-multi-thread"] }
 tokio-stream = "0.1.18"
 tokio-util = { version = "0.7.18", features = ["io", "io-util"] }
 tower-http = { version = "0.6.8", features = ["fs"] }
+tower-service = "0.3.3"
 url = { version = "2.5.8", features = ["serde"] }
 
 [[bench]]
