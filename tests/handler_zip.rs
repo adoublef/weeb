@@ -1,3 +1,4 @@
+mod common;
 use anyhow::Context as _;
 use async_zip::base::read::stream::ZipFileReader;
 use axum::{
@@ -9,12 +10,7 @@ use axum::{
 use futures::TryStreamExt as _;
 use http::{StatusCode, header::CONTENT_TYPE};
 use mime::APPLICATION_OCTET_STREAM;
-use reqwest::Client;
-use tokio::{
-    io::{AsyncBufRead, BufReader, sink},
-    net::TcpListener,
-    task::JoinSet,
-};
+use tokio::{io::BufReader, task::JoinSet};
 use tokio_util::{compat::FuturesAsyncReadCompatExt, io::StreamReader, sync::CancellationToken};
 use tower_http::services::ServeFile;
 use url::Url;
@@ -25,11 +21,16 @@ async fn handle_zip_ok() -> anyhow::Result<()> {
     let mut set = JoinSet::new();
     let token = CancellationToken::new();
 
-    let num_chapters = 1 << 2;
-    let num_images = 1 << 2;
+    let num_chapters = 1 << 3;
+    let num_images = 1 << 3;
 
-    let (client, api_url) = api_serve(&mut set, token.clone(), num_chapters, num_images).await?;
-    let (client, mut url) = serve(&mut set, token.clone(), client).await?;
+    let (_client, api_url) = common::listen_and_serve_with_addr(
+        &mut set,
+        token.clone(),
+        test_app(num_chapters, num_images),
+    )
+    .await?;
+    let (client, mut url) = common::listen_and_serve(&mut set, token.clone(), app()).await?;
 
     url.query_pairs_mut()
         .append_pair("series_url", &format!("{api_url}series/1"))
@@ -81,64 +82,25 @@ async fn handle_zip_ok() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn api_serve(
-    set: &mut JoinSet<anyhow::Result<()>>,
-    token: CancellationToken,
-    num_chapters: usize,
-    num_images: usize,
-) -> anyhow::Result<(Client, Url)> {
-    let listener = TcpListener::bind("0.0.0.0:0").await?;
-    let addr = listener.local_addr()?;
-
-    let client = Client::builder().build()?; // modify the client
-    let url = Url::parse(&format!("http://{addr}"))?;
-
-    let app = Router::new()
-        .route(
-            "/series/{series}/full-chapter-list",
-            get(async move |State(url): State<_>| Html(template::series(num_chapters, url))),
-        )
-        .route(
-            "/chapters/{chapters}/images",
-            get(
-                async move |State(url): State<_>, Path(chapter_id): Path<_>| {
-                    Html(template::chapter(num_images, url, chapter_id))
-                },
-            ),
-        )
-        .route(
-            "/images/{image}",
-            get_service(ServeFile::new("assets/image.jpg")),
-        )
-        .with_state(url.clone());
-
-    set.spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move { token.cancelled().await })
-            .await?;
-        Ok(())
-    });
-
-    Ok((client, url))
-}
-
-async fn serve(
-    set: &mut JoinSet<anyhow::Result<()>>,
-    token: CancellationToken,
-    _api_client: Client,
-) -> anyhow::Result<(Client, Url)> {
-    let listener = TcpListener::bind("0.0.0.0:0").await?;
-    let addr = listener.local_addr()?;
-
-    let client = Client::new();
-    let url = Url::parse(&format!("http://{addr}"))?;
-
-    set.spawn(async move {
-        axum::serve(listener, app())
-            .with_graceful_shutdown(async move { token.cancelled().await })
-            .await?;
-        Ok(())
-    });
-
-    Ok((client, url))
+fn test_app(num_chapters: usize, num_images: usize) -> impl FnOnce(&Url) -> Router {
+    move |url: &Url| {
+        Router::new()
+            .route(
+                "/series/{series}/full-chapter-list",
+                get(async move |State(url): State<Url>| Html(template::series(num_chapters, url))),
+            )
+            .route(
+                "/chapters/{chapters}/images",
+                get(
+                    async move |State(url): State<Url>, Path(chapter_id): Path<_>| {
+                        Html(template::chapter(num_images, url, chapter_id))
+                    },
+                ),
+            )
+            .route(
+                "/images/{image}",
+                get_service(ServeFile::new("assets/image.jpg")),
+            )
+            .with_state::<_>(url.clone())
+    }
 }

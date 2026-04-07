@@ -1,3 +1,4 @@
+mod common;
 use axum::{
     Router,
     extract::{Path, State},
@@ -7,7 +8,7 @@ use axum::{
 use divan::{AllocProfiler, Bencher};
 use futures::TryStreamExt as _;
 use reqwest::Client;
-use tokio::{net::TcpListener, task::JoinSet};
+use tokio::task::JoinSet;
 use tokio_util::{io::StreamReader, sync::CancellationToken};
 use tower_http::services::ServeFile;
 use url::Url;
@@ -32,8 +33,10 @@ fn handle_zip_ok(b: Bencher, arg: &Arg) {
     let token = token.clone();
     let (client, mut url, api_url) = rt
         .block_on(async {
-            let (client, api_url) = api_serve(&mut set, token.clone(), arg.0, arg.1).await?;
-            let (client, url) = serve(&mut set, token.clone(), client).await?;
+            let (_client, api_url) =
+                common::listen_and_serve_with_addr(&mut set, token.clone(), test_app(arg.0, arg.1))
+                    .await?;
+            let (client, url) = common::listen_and_serve(&mut set, token.clone(), app()).await?;
             anyhow::Ok((client, url, api_url))
         })
         .unwrap();
@@ -68,64 +71,25 @@ fn handle_zip_ok(b: Bencher, arg: &Arg) {
     assert!(cancelled)
 }
 
-async fn api_serve(
-    set: &mut JoinSet<anyhow::Result<()>>,
-    token: CancellationToken,
-    num_chapters: usize,
-    num_images: usize,
-) -> anyhow::Result<(Client, Url)> {
-    let listener = TcpListener::bind("0.0.0.0:0").await?;
-    let addr = listener.local_addr()?;
-
-    let client = Client::builder().build()?; // modify the client
-    let url = Url::parse(&format!("http://{addr}"))?;
-
-    let app = Router::new()
-        .route(
-            "/series/{series}/full-chapter-list",
-            get(async move |State(url): State<_>| Html(template::series(num_chapters, url))),
-        )
-        .route(
-            "/chapters/{chapters}/images",
-            get(
-                async move |State(url): State<_>, Path(chapter_id): Path<_>| {
-                    Html(template::chapter(num_images, url, chapter_id))
-                },
-            ),
-        )
-        .route(
-            "/images/{image}",
-            get_service(ServeFile::new("assets/image.jpg")),
-        )
-        .with_state(url.clone());
-
-    set.spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move { token.cancelled().await })
-            .await?;
-        Ok(())
-    });
-
-    Ok((client, url))
-}
-
-async fn serve(
-    set: &mut JoinSet<anyhow::Result<()>>,
-    token: CancellationToken,
-    _api_client: Client,
-) -> anyhow::Result<(Client, Url)> {
-    let listener = TcpListener::bind("0.0.0.0:0").await?;
-    let addr = listener.local_addr()?;
-
-    let client = Client::new();
-    let url = Url::parse(&format!("http://{addr}"))?;
-
-    set.spawn(async move {
-        axum::serve(listener, app())
-            .with_graceful_shutdown(async move { token.cancelled().await })
-            .await?;
-        Ok(())
-    });
-
-    Ok((client, url))
+fn test_app(num_chapters: usize, num_images: usize) -> impl FnOnce(&Url) -> Router {
+    move |url: &Url| {
+        Router::new()
+            .route(
+                "/series/{series}/full-chapter-list",
+                get(async move |State(url): State<Url>| Html(template::series(num_chapters, url))),
+            )
+            .route(
+                "/chapters/{chapters}/images",
+                get(
+                    async move |State(url): State<Url>, Path(chapter_id): Path<_>| {
+                        Html(template::chapter(num_images, url, chapter_id))
+                    },
+                ),
+            )
+            .route(
+                "/images/{image}",
+                get_service(ServeFile::new("assets/image.jpg")),
+            )
+            .with_state::<_>(url.clone())
+    }
 }
