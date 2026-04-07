@@ -1,3 +1,4 @@
+use crate::weeb::Handler;
 use axum::{
     Router,
     body::Body,
@@ -12,8 +13,6 @@ use http::{
 use mime::APPLICATION_OCTET_STREAM;
 use serde::Deserialize;
 use url::Url;
-
-use crate::weeb::Handler;
 
 pub fn app() -> Router {
     Router::new()
@@ -67,4 +66,11 @@ where
     fn from(err: E) -> Self {
         Self(err.into())
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HttpClient(pub reqwest::Client);
+
+impl HttpClient {
+    //
 }
